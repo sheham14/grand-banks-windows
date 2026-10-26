@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Secrets and local settings
+.env
+.env.*
+!.env.example
+
+# Weather data: downloaded and derived files never go in git
+data/
+*.grib2
+*.grb2
+*.nc
+*.swob.xml
+
+# Node (dashboard)
+node_modules/
+dist/
+.next/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# OS and editor
+.DS_Store
+Thumbs.db
+.vscode/

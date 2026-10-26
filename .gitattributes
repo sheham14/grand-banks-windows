@@ -1,0 +1,5 @@
+# Store text with Linux line endings so files behave the same in WSL, Docker and the cloud VM
+* text=auto eol=lf
+*.png binary
+*.grib2 binary
+*.nc binary
