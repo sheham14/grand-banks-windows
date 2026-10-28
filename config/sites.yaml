@@ -1,0 +1,24 @@
+# Points the pipeline extracts forecasts for.
+#
+# Coordinates are decimal degrees. North and east are positive,
+# so every longitude here is negative (west).
+#
+# role:
+#   forecast      we produce forecasts here; no live observations to check against
+#   verification  a live buoy we score forecasts against (added in Phase 2a)
+
+sites:
+  - id: nickerson_bank
+    name: Nickerson Bank
+    lat: 46.44
+    lon: -53.39
+    role: forecast
+    buoy_id: "44251"
+    note: ECCC buoy, silent as of 2026-10-26, so no live verification here.
+
+  - id: wsp_grand_banks
+    name: WSP Grand Banks (Waypoint 3)
+    lat: 47.24
+    lon: -50.95
+    role: forecast
+    note: WSP wave buoy, data only for 2022-03-01 to 2022-04-30 (Phase 2b hindcast).
