@@ -51,6 +51,10 @@ class ModelConfig:
     grid: str                       # e.g. "RLatLon0.0225"
     variables: tuple[Variable, ...]
     folder: Path                    # where sr3 saves this model's files
+    datamart_path: str              # URL path template, used by the fallback
+    late_after: timedelta           # run time + this, not complete -> "late"
+    give_up_after: timedelta        # run time + this, not complete -> "incomplete"
+    backfill: timedelta             # how far back the fallback fills gaps
 
     @property
     def files_per_run(self) -> int:
@@ -83,6 +87,10 @@ def load_models(path: Path = DEFAULT_CONFIG) -> dict[str, ModelConfig]:
             # The YAML gives a path relative to the repo root; make it
             # absolute so it works from any working directory.
             folder=REPO_ROOT / m["folder"],
+            datamart_path=m["datamart_path"],
+            late_after=timedelta(hours=m["late_after_hours"]),
+            give_up_after=timedelta(hours=m["give_up_after_hours"]),
+            backfill=timedelta(hours=m["backfill_hours"]),
         )
     return models
 

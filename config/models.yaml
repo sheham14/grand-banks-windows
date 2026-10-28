@@ -25,6 +25,20 @@ models:
     # Where sr3 saves the files, relative to the repo root. Must match
     # `directory` in ingest/sr3/hrdps.conf; the ingest scan reads it.
     folder: data/raw/hrdps
+    # Where each file lives on the Datamart, after https://dd.weather.gc.ca/.
+    # ingest/fallback.py fills it in: {run:%Y%m%d} = run date, {run:%H} = run
+    # hour, {lead:03d} = lead hour as 3 digits, {name} = the filename.
+    # HRDPS has one folder per lead hour. Checked against real sr3 notices.
+    datamart_path: "{run:%Y%m%d}/WXO-DD/model_hrdps/continental/2.5km/{run:%H}/{lead:03d}/{name}"
+    # Deadlines, counted from the run time. PROVISIONAL: based on only 2
+    # runs per model (2026-10-28 06Z and 12Z, whose last files came at
+    # +3h15m to +3h27m). Revisit after the 3-day run.
+    late_after_hours: 4      # not complete by then: "late", the fallback starts
+    give_up_after_hours: 8   # still not complete: "incomplete"
+    # How far back the fallback fills gaps, e.g. after the laptop slept.
+    # The Datamart keeps 30 days, but a long outage would mean tens of GB;
+    # older gaps stay visible as incomplete runs instead.
+    backfill_hours: 48
     # The variables we subscribe to in ingest/sr3/hrdps.conf.
     # Keep the two lists in step: a variable here but not in sr3 would
     # make every run look incomplete.
@@ -41,6 +55,17 @@ models:
     grid: RLatLon0.0225
     # Must match `directory` in ingest/sr3/rdwps.conf.
     folder: data/raw/rdwps
+    # Unlike HRDPS, RDWPS has no per-lead-hour folder.
+    datamart_path: "{run:%Y%m%d}/WXO-DD/model_rdwps/national/2.5km/{run:%H}/{name}"
+    # Deadlines, counted from the run time. PROVISIONAL: based on only 2
+    # runs per model (2026-10-28 06Z and 12Z, whose last files came at
+    # +3h15m to +3h27m). Revisit after the 3-day run.
+    late_after_hours: 4      # not complete by then: "late", the fallback starts
+    give_up_after_hours: 8   # still not complete: "incomplete"
+    # How far back the fallback fills gaps, e.g. after the laptop slept.
+    # The Datamart keeps 30 days, but a long outage would mean tens of GB;
+    # older gaps stay visible as incomplete runs instead.
+    backfill_hours: 48
     # The variables we subscribe to in ingest/sr3/rdwps.conf.
     variables:
       - {name: HTSGW, level: Sfc}  # significant wave height, at the sea surface
