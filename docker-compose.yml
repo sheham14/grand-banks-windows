@@ -1,3 +1,26 @@
+# Everything the pipeline runs, on the laptop and the VM alike.
+# Start: docker compose up -d --build     Logs: docker compose logs -f ingest
+#
+#   db          Postgres: runs and run_files
+#   sr3-hrdps   AMQP subscriber, downloads HRDPS wind into data/raw/hrdps
+#   sr3-rdwps   AMQP subscriber, downloads RDWPS waves into data/raw/rdwps
+#   sr3-buoys   AMQP subscriber, saves buoy SWOB-ML into data/raw/swob
+#   ingest      checks and records downloaded files, runs the fallback
+#
+# restart: unless-stopped brings every service back after a crash or a
+# reboot, unless we stopped it ourselves. That's what lets it run
+# unattended for days.
+
+# Settings shared by the three sr3 services (a YAML anchor: "&sr3" names
+# this block, "<<: *sr3" below pastes it in).
+x-sr3: &sr3
+  build: .
+  image: gbw-pipeline
+  restart: unless-stopped
+  user: "1000:1000"
+  # (Each sr3 service lists its own volumes: a YAML merge replaces a list
+  # instead of combining it, so they can't be shared from here.)
+
 services:
   db:
     image: postgres:17
@@ -19,5 +42,69 @@ services:
       timeout: 3s
       retries: 10
 
+  # "foreground" runs one subscription in this container's main process,
+  # logging to the console. If it dies, the container stops and Docker
+  # restarts it (sr3's own background mode would hide that from Docker).
+  # A fixed hostname keeps sr3's queue name the same across restarts.
+  sr3-hrdps:
+    <<: *sr3
+    hostname: gbw-sr3-hrdps
+    command: sr3 foreground subscribe/hrdps
+    volumes:
+      # Downloads land here; the ingest service sees the same folder.
+      - ./data:/app/data
+      # The broker login (ECCC's public anonymous one), read-only.
+      - ./ingest/sr3/credentials.conf:/home/gbw/.config/sr3/credentials.conf:ro
+      # sr3's state, including each subscription's queue name. Keeping it
+      # means a restarted container reconnects to the SAME queue on ECCC's
+      # broker and gets the notices that waited there while it was down.
+      - sr3state:/home/gbw/.cache/sr3
+      # Only this service's config: sr3 sets up state for every config it
+      # can see, so with all three visible the containers overwrote each
+      # other's queue-name files in the shared sr3state volume.
+      - ./ingest/sr3/hrdps.conf:/home/gbw/.config/sr3/subscribe/hrdps.conf:ro
+
+  sr3-rdwps:
+    <<: *sr3
+    hostname: gbw-sr3-rdwps
+    command: sr3 foreground subscribe/rdwps
+    volumes:
+      - ./data:/app/data
+      - ./ingest/sr3/credentials.conf:/home/gbw/.config/sr3/credentials.conf:ro
+      - sr3state:/home/gbw/.cache/sr3
+      # Only this service's config (see sr3-hrdps).
+      - ./ingest/sr3/rdwps.conf:/home/gbw/.config/sr3/subscribe/rdwps.conf:ro
+
+  sr3-buoys:
+    <<: *sr3
+    hostname: gbw-sr3-buoys
+    command: sr3 foreground subscribe/buoys
+    volumes:
+      - ./data:/app/data
+      - ./ingest/sr3/credentials.conf:/home/gbw/.config/sr3/credentials.conf:ro
+      - sr3state:/home/gbw/.cache/sr3
+      # Only this service's config (see sr3-hrdps).
+      - ./ingest/sr3/buoys.conf:/home/gbw/.config/sr3/subscribe/buoys.conf:ro
+
+  ingest:
+    build: .
+    image: gbw-pipeline
+    restart: unless-stopped
+    user: "1000:1000"
+    command: python -m ingest.scan
+    env_file: .env
+    environment:
+      # Inside Compose, Postgres is the "db" service on its normal port.
+      # (The 5434 in .env is only how the laptop reaches it from outside.)
+      # These override .env, so ingest/db.py needs no changes.
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   pgdata:
+  sr3state:
