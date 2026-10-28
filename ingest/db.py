@@ -173,6 +173,34 @@ def recorded_names(conn: psycopg.Connection, model: str) -> frozenset[str]:
     return frozenset(name for (name,) in rows)
 
 
+def oldest_run_time(conn: psycopg.Connection, model: str) -> datetime | None:
+    """The run time of the model's first ever recorded run, or None.
+
+    status.py never creates rows for runs before this, so a fresh system
+    doesn't suddenly report 30 days of "missing" runs from before it existed.
+    """
+    return conn.execute(
+        "SELECT min(run_time) FROM runs WHERE model = %s", (model,)
+    ).fetchone()[0]
+
+
+def unfinished_runs(conn: psycopg.Connection, model: str) -> list[tuple[int, datetime, str]]:
+    """(id, run_time, status) of every run of the model not yet complete."""
+    return conn.execute(
+        """
+        SELECT id, run_time, status FROM runs
+        WHERE model = %s AND status <> 'complete'
+        ORDER BY run_time
+        """,
+        (model,),
+    ).fetchall()
+
+
+def set_status(conn: psycopg.Connection, run_id: int, status: str) -> None:
+    """Change a run's status. The CHECK in 001_runs.sql rejects unknown values."""
+    conn.execute("UPDATE runs SET status = %s WHERE id = %s", (status, run_id))
+
+
 def _require_utc(t: datetime, what: str) -> None:
     """Refuse naive or non-UTC times, so only UTC ever reaches the database.
 
