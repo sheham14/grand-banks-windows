@@ -12,6 +12,9 @@ The ingest job uses three functions, once per downloaded file:
     have   = received_files(conn, run_id)
     missing = expected_files(...) - have      # from ingest/models.py
 
+plus recorded_names(), which the scan loop uses to skip files it has
+already handled.
+
 Every function is safe to call twice with the same input. AMQP can
 deliver the same notice twice, and a restarted job re-scans files it
 already handled, so "do it again" must never double-count anything.
@@ -147,6 +150,26 @@ def received_files(conn: psycopg.Connection, run_id: int) -> frozenset[str]:
         "SELECT file_name FROM run_files WHERE run_id = %s", (run_id,)
     ).fetchall()
     # Each row is a 1-item tuple like ("2026...grib2",); (name,) unpacks it.
+    return frozenset(name for (name,) in rows)
+
+
+def recorded_names(conn: psycopg.Connection, model: str) -> frozenset[str]:
+    """Every file name already recorded for a model, across all its runs.
+
+    The scan loop calls this once per pass so it can skip old files
+    without opening them. Filenames include the run time, so a name
+    never repeats between runs. (This set grows by ~800 names a day for
+    HRDPS; fine for months. Limit it to recent runs if it ever gets slow.)
+    """
+    rows = conn.execute(
+        """
+        SELECT f.file_name
+        FROM run_files f
+        JOIN runs r ON r.id = f.run_id
+        WHERE r.model = %s
+        """,
+        (model,),
+    ).fetchall()
     return frozenset(name for (name,) in rows)
 
 
