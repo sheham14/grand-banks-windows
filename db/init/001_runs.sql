@@ -2,6 +2,8 @@
 -- All times are timezone-aware UTC (timestamptz).
 -- Files received are counted from run_files, not stored here,
 -- so a duplicate notice can't inflate the count.
+-- first_file_at / last_file_at are ECCC publish times of the run's
+-- earliest and latest file (see run_files.published_at).
 
 CREATE TABLE runs (
     id              bigserial   PRIMARY KEY,
