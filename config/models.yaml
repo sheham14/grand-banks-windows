@@ -1,0 +1,42 @@
+# What a complete run of each model contains (build step 5, piece 2).
+#
+# These are facts about ECCC's models, not about our code, so they live
+# here. ingest/models.py reads this file and works out the exact list of
+# filenames each run should have.
+#
+# There is deliberately no "files per run" number here. The code
+# calculates it (variables x lead hours), so adding a variable can never
+# leave a stale count behind.
+#
+# Every value below matches what we received on 2026-10-28:
+# HRDPS 06Z and 12Z, RDWPS 06Z and 12Z, all hours 000-048.
+# Still to check: the 00Z and 18Z runs also go to hour 48.
+
+models:
+  HRDPS:
+    description: High Resolution Deterministic Prediction System (weather, 2.5 km)
+    # Runs start at these UTC hours every day.
+    run_hours: [0, 6, 12, 18]
+    # Forecast hours published per run. "last" is included, so 0 to 48 is
+    # 49 hours, not 48 (hour 000 is the analysis time itself).
+    lead_hours: {first: 0, last: 48, step: 1}
+    # Grid as written in the filename: rotated lat-lon, 0.0225 deg spacing.
+    grid: RLatLon0.0225
+    # The variables we subscribe to in ingest/sr3/hrdps.conf.
+    # Keep the two lists in step: a variable here but not in sr3 would
+    # make every run look incomplete.
+    variables:
+      - {name: UGRD, level: AGL-10m}  # u wind (grid-relative), 10 m above ground
+      - {name: VGRD, level: AGL-10m}  # v wind (grid-relative), 10 m above ground
+      - {name: WIND, level: AGL-10m}  # wind speed, 10 m
+      - {name: WDIR, level: AGL-10m}  # wind direction ("from"), 10 m
+
+  RDWPS:
+    description: Regional Deterministic Wave Prediction System (waves, national 2.5 km domain)
+    run_hours: [0, 6, 12, 18]
+    lead_hours: {first: 0, last: 48, step: 1}
+    grid: RLatLon0.0225
+    # The variables we subscribe to in ingest/sr3/rdwps.conf.
+    variables:
+      - {name: HTSGW, level: Sfc}  # significant wave height, at the sea surface
+      - {name: PWPER, level: Sfc}  # peak wave period, at the sea surface
