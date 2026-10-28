@@ -8,6 +8,8 @@ It ties the earlier pieces together:
     models.py     what a full run has     -> 196 / 98 files
     gribcheck.py  is the file sound?      -> 7777, 1 message, header matches
     db.py         record it               -> runs, run_files
+    status.py     complete / late / ...   -> runs.status, missing runs found
+    fallback.py   fetch what's missing    -> by known name, never a listing
 
 Why a separate loop instead of a hook inside sr3: files from sr3 and,
 later, from the fallback (piece 6) land in the same folders, so one code
@@ -16,6 +18,10 @@ picks up every file not yet in run_files.
 
 Listing our OWN folders is fine. Only Datamart directory listings are
 forbidden.
+
+One pass = scan the folders, update every unfinished run's status, then
+let the fallback fetch files for late runs. Files the fallback saves are
+recorded by the next pass, through the same checks as sr3's files.
 
 Run it:
     python -m ingest.scan          # every 60 seconds until Ctrl+C
@@ -30,9 +36,11 @@ from datetime import datetime, timezone
 import psycopg
 
 from ingest.db import connect, get_or_create_run, received_files, recorded_names, record_file
+from ingest.fallback import Fallback
 from ingest.filenames import parse_filename
 from ingest.gribcheck import GribCheckError, check_grib
-from ingest.models import ModelConfig, load_models
+from ingest.models import ModelConfig, expected_files, load_models
+from ingest.status import update_statuses
 
 log = logging.getLogger("ingest.scan")
 
@@ -40,6 +48,25 @@ log = logging.getLogger("ingest.scan")
 # logged once, not every minute. Piece 6 will deal with such files
 # (re-fetch, or mark the run incomplete).
 _warned: set[str] = set()
+
+
+def run_pass(
+    conn: psycopg.Connection,
+    models: dict[str, ModelConfig],
+    fallback: Fallback,
+    now: datetime | None = None,
+) -> int:
+    """One full pass: scan, update statuses, fetch for late runs.
+
+    Returns how many new files were recorded. `now` can be passed in by
+    tests; normally it's the current time in UTC.
+    """
+    now = now or datetime.now(timezone.utc)
+    new = scan_once(conn, models)
+    for model in models.values():
+        for run_time, missing in update_statuses(conn, model, now):
+            fallback.attempt(model, run_time, missing, now)
+    return new
 
 
 def scan_once(conn: psycopg.Connection, models: dict[str, ModelConfig]) -> int:
@@ -56,6 +83,7 @@ def _scan_model(conn: psycopg.Connection, model: ModelConfig) -> int:
 
     new = 0
     new_per_run: dict[int, datetime] = {}  # runs.id -> run time, runs that grew
+    expected: dict[datetime, frozenset[str]] = {}  # run time -> expected names
 
     # sorted(): a stable order makes logs easier to read. Nothing relies
     # on it; record_file() copes with any order (the LEAST/GREATEST logic).
@@ -76,6 +104,14 @@ def _scan_model(conn: psycopg.Connection, model: ModelConfig) -> int:
             continue
         if f.run_time.hour not in model.run_hours:
             _warn_once(path.name, f"{path.name}: {model.name} has no {f.run_time:%H}Z run")
+            continue
+        # Only files models.yaml expects count. A stray variable or a lead
+        # hour past 48 would otherwise be recorded without ever counting
+        # towards a complete run.
+        if f.run_time not in expected:
+            expected[f.run_time] = expected_files(model, f.run_time)
+        if f.name not in expected[f.run_time]:
+            _warn_once(path.name, f"{path.name}: not a file models.yaml expects")
             continue
 
         try:
@@ -128,6 +164,7 @@ def main() -> None:
     )
 
     models = load_models()
+    fallback = Fallback()
     conn = None
     while True:
         try:
@@ -136,7 +173,7 @@ def main() -> None:
             # matters for a job that has to run unattended for days.
             if conn is None or conn.closed:
                 conn = connect()
-            new = scan_once(conn, models)
+            new = run_pass(conn, models, fallback)
             if new:
                 log.info("pass done: %d new file(s)", new)
         except psycopg.OperationalError as e:
