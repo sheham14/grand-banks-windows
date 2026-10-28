@@ -1,0 +1,11 @@
+# Keep the image small and free of secrets: only what the Dockerfile copies
+# needs to be sent to the Docker build.
+.git
+.env
+.env.*
+data/
+notebooks/
+docs/
+tests/
+**/__pycache__
+.pytest_cache

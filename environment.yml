@@ -1,0 +1,20 @@
+# Python environment for the Docker image (sr3 subscribers + ingest job).
+#
+# Versions are pinned to what the local `gbw` micromamba environment had
+# when the code was tested on 2026-10-28, so the laptop and the VM run
+# the same thing. conda-forge, because ecCodes is a C library that pip
+# doesn't install reliably.
+name: base
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - eccodes=2.50.0          # the C library that decodes GRIB
+  - python-eccodes=2.50.0   # its Python bindings (import eccodes)
+  - psycopg=3.3.4           # Postgres driver
+  - pyyaml=6.0.3            # config/*.yaml
+  - python-dotenv=1.2.4     # reads .env when run outside Docker
+  - pip
+  - pip:
+      - metpx-sr3==3.3.1    # ECCC's sr3 client (not on conda-forge)
+      - amqp==5.4.1         # lets sr3 talk to the AMQP broker
