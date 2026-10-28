@@ -1,0 +1,4 @@
+[tool.pytest.ini_options]
+# Let tests import our code as "ingest.filenames" from the repo root.
+pythonpath = ["."]
+testpaths = ["tests"]
