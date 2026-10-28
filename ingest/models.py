@@ -23,9 +23,10 @@ from pathlib import Path
 
 import yaml
 
-# config/models.yaml, found relative to this file so it works no matter
-# which folder the code is started from.
-DEFAULT_CONFIG = Path(__file__).resolve().parent.parent / "config" / "models.yaml"
+# The repo root and config/models.yaml, found relative to this file so
+# they work no matter which folder the code is started from.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG = REPO_ROOT / "config" / "models.yaml"
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ class ModelConfig:
     lead_hours: tuple[int, ...]     # every lead hour, e.g. (0, 1, ..., 48)
     grid: str                       # e.g. "RLatLon0.0225"
     variables: tuple[Variable, ...]
+    folder: Path                    # where sr3 saves this model's files
 
     @property
     def files_per_run(self) -> int:
@@ -78,6 +80,9 @@ def load_models(path: Path = DEFAULT_CONFIG) -> dict[str, ModelConfig]:
             lead_hours=tuple(range(lead["first"], lead["last"] + 1, lead["step"])),
             grid=m["grid"],
             variables=tuple(Variable(v["name"], v["level"]) for v in m["variables"]),
+            # The YAML gives a path relative to the repo root; make it
+            # absolute so it works from any working directory.
+            folder=REPO_ROOT / m["folder"],
         )
     return models
 

@@ -22,6 +22,9 @@ models:
     lead_hours: {first: 0, last: 48, step: 1}
     # Grid as written in the filename: rotated lat-lon, 0.0225 deg spacing.
     grid: RLatLon0.0225
+    # Where sr3 saves the files, relative to the repo root. Must match
+    # `directory` in ingest/sr3/hrdps.conf; the ingest scan reads it.
+    folder: data/raw/hrdps
     # The variables we subscribe to in ingest/sr3/hrdps.conf.
     # Keep the two lists in step: a variable here but not in sr3 would
     # make every run look incomplete.
@@ -36,6 +39,8 @@ models:
     run_hours: [0, 6, 12, 18]
     lead_hours: {first: 0, last: 48, step: 1}
     grid: RLatLon0.0225
+    # Must match `directory` in ingest/sr3/rdwps.conf.
+    folder: data/raw/rdwps
     # The variables we subscribe to in ingest/sr3/rdwps.conf.
     variables:
       - {name: HTSGW, level: Sfc}  # significant wave height, at the sea surface
