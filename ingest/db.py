@@ -228,7 +228,8 @@ def next_run_to_extract(
     Waiting runs are finished (complete, or incomplete: given up on with
     gaps), not yet extracted, and not refused. Newest first, so after an
     outage the latest forecast is ready first and the backlog follows.
-    "late" runs wait: the fallback is still fetching their files.
+    "late" runs wait: the fallback is still fetching their files. Runs
+    whose raw files were deleted are left out: they can't be extracted.
     """
     return conn.execute(
         """
@@ -237,6 +238,7 @@ def next_run_to_extract(
           AND status IN ('complete', 'incomplete')
           AND extracted_at IS NULL
           AND extract_error IS NULL
+          AND raw_deleted_at IS NULL
         ORDER BY run_time DESC, model
         LIMIT 1
         """,
@@ -292,6 +294,34 @@ def mark_extract_failed(conn: psycopg.Connection, run_id: int, reason: str) -> N
     """Record why the extractor refused a run. It won't be picked again
     until someone clears extract_error (after fixing the cause)."""
     conn.execute("UPDATE runs SET extract_error = %s WHERE id = %s", (reason, run_id))
+
+
+def runs_to_clean(
+    conn: psycopg.Connection, model: str, older_than: datetime
+) -> list[tuple[int, datetime]]:
+    """(id, run_time) of runs whose raw files may be deleted, oldest first.
+
+    Extracted, not refused, not already cleaned, and older than the
+    cutoff. The rule itself is explained in ingest/cleanup.py.
+    """
+    _require_utc(older_than, "older_than")
+    return conn.execute(
+        """
+        SELECT id, run_time FROM runs
+        WHERE model = %s
+          AND extracted_at IS NOT NULL
+          AND extract_error IS NULL
+          AND raw_deleted_at IS NULL
+          AND run_time < %s
+        ORDER BY run_time
+        """,
+        (model, older_than),
+    ).fetchall()
+
+
+def mark_raw_deleted(conn: psycopg.Connection, run_id: int) -> None:
+    """Record that a run's raw files are gone from disk."""
+    conn.execute("UPDATE runs SET raw_deleted_at = now() WHERE id = %s", (run_id,))
 
 
 def _require_utc(t: datetime, what: str) -> None:

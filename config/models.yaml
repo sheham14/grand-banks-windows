@@ -39,6 +39,11 @@ models:
     # The Datamart keeps 30 days, but a long outage would mean tens of GB;
     # older gaps stay visible as incomplete runs instead.
     backfill_hours: 48
+    # How long raw files stay on disk after a run is extracted; then
+    # ingest/cleanup.py deletes them. Must be longer than backfill_hours,
+    # because until then a run can still become complete and be extracted
+    # again. 5 days levels off at about 11 GB of raw files on the VM.
+    keep_raw_days: 5
     # The variables we subscribe to in ingest/sr3/hrdps.conf.
     # Keep the two lists in step: a variable here but not in sr3 would
     # make every run look incomplete.
@@ -66,6 +71,11 @@ models:
     # The Datamart keeps 30 days, but a long outage would mean tens of GB;
     # older gaps stay visible as incomplete runs instead.
     backfill_hours: 48
+    # How long raw files stay on disk after a run is extracted; then
+    # ingest/cleanup.py deletes them. Must be longer than backfill_hours,
+    # because until then a run can still become complete and be extracted
+    # again. 5 days levels off at about 11 GB of raw files on the VM.
+    keep_raw_days: 5
     # The variables we subscribe to in ingest/sr3/rdwps.conf.
     variables:
       - {name: HTSGW, level: Sfc}  # significant wave height, at the sea surface

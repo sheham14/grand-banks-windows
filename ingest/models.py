@@ -55,6 +55,7 @@ class ModelConfig:
     late_after: timedelta           # run time + this, not complete -> "late"
     give_up_after: timedelta        # run time + this, not complete -> "incomplete"
     backfill: timedelta             # how far back the fallback fills gaps
+    keep_raw: timedelta             # raw files older than this can go, once extracted
 
     @property
     def files_per_run(self) -> int:
@@ -74,6 +75,10 @@ def load_models(path: Path = DEFAULT_CONFIG) -> dict[str, ModelConfig]:
         lead = m["lead_hours"]
         if lead["step"] <= 0 or lead["last"] < lead["first"]:
             raise ValueError(f"{name}: bad lead_hours {lead}")
+        # Until the fallback stops, a run can still become complete and be
+        # extracted again, which needs its raw files (see ingest/cleanup.py).
+        if timedelta(days=m["keep_raw_days"]) <= timedelta(hours=m["backfill_hours"]):
+            raise ValueError(f"{name}: keep_raw_days must be longer than backfill_hours")
 
         models[name] = ModelConfig(
             name=name,
@@ -91,6 +96,7 @@ def load_models(path: Path = DEFAULT_CONFIG) -> dict[str, ModelConfig]:
             late_after=timedelta(hours=m["late_after_hours"]),
             give_up_after=timedelta(hours=m["give_up_after_hours"]),
             backfill=timedelta(hours=m["backfill_hours"]),
+            keep_raw=timedelta(days=m["keep_raw_days"]),
         )
     return models
 
