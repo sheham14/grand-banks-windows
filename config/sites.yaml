@@ -5,7 +5,8 @@
 #
 # role:
 #   forecast      we produce forecasts here; no live observations to check against
-#   verification  a live buoy we score forecasts against (added in Phase 2a)
+#   verification  a live buoy we score forecasts against. Scoring is Phase 2a;
+#                 forecasts are stored from now on so it starts with history.
 
 sites:
   - id: nickerson_bank
@@ -22,3 +23,13 @@ sites:
     lon: -50.95
     role: forecast
     note: WSP wave buoy, data only for 2022-03-01 to 2022-04-30 (Phase 2b hindcast).
+
+  - id: banquereau_bank
+    name: Banquereau Bank
+    # Read from the buoy's own SWOB-ML files: the same value in all 103
+    # received from 2026-10-28 to 2026-11-02.
+    lat: 44.24
+    lon: -57.103333
+    role: verification
+    buoy_id: "44139"
+    note: ECCC moored buoy, reporting hourly. 379 km from Nickerson Bank and 582 km from the WSP site, so not on the Grand Banks themselves.
