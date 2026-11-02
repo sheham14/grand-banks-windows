@@ -6,6 +6,7 @@
 #   sr3-rdwps   AMQP subscriber, downloads RDWPS waves into data/raw/rdwps
 #   sr3-buoys   AMQP subscriber, saves buoy SWOB-ML into data/raw/swob
 #   ingest      checks and records downloaded files, runs the fallback
+#   store       extracts each finished run at our sites into point_forecasts
 #
 # restart: unless-stopped brings every service back after a crash or a
 # reboot, unless we stopped it ourselves. That's what lets it run
@@ -101,6 +102,25 @@ services:
       POSTGRES_PORT: "5432"
     volumes:
       - ./data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Separate from ingest: extracting a run takes minutes (every file is
+  # decoded whole), which would hold up the ingest's every-minute scan.
+  store:
+    build: .
+    image: gbw-pipeline
+    restart: unless-stopped
+    user: "1000:1000"
+    command: python -m ingest.store
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+    volumes:
+      # Read-only: this job only reads GRIB files, so it can't damage them.
+      - ./data:/app/data:ro
     depends_on:
       db:
         condition: service_healthy

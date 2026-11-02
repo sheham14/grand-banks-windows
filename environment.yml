@@ -11,6 +11,8 @@ dependencies:
   - python=3.12
   - eccodes=2.50.0          # the C library that decodes GRIB
   - python-eccodes=2.50.0   # its Python bindings (import eccodes)
+  - numpy=2.5.4             # arrays; the extractor's site lookup uses it directly
+                            # (pinned 2026-11-01 to the local gbw version)
   - psycopg=3.3.4           # Postgres driver
   - pyyaml=6.0.3            # config/*.yaml
   - python-dotenv=1.2.4     # reads .env when run outside Docker
