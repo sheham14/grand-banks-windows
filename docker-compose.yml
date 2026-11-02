@@ -5,7 +5,8 @@
 #   sr3-hrdps   AMQP subscriber, downloads HRDPS wind into data/raw/hrdps
 #   sr3-rdwps   AMQP subscriber, downloads RDWPS waves into data/raw/rdwps
 #   sr3-buoys   AMQP subscriber, saves buoy SWOB-ML into data/raw/swob
-#   ingest      checks and records downloaded files, runs the fallback
+#   ingest      checks and records downloaded files, runs the fallback,
+#               deletes raw files of old extracted runs
 #   store       extracts each finished run at our sites into point_forecasts
 #
 # restart: unless-stopped brings every service back after a crash or a

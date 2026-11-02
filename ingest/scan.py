@@ -10,6 +10,7 @@ It ties the earlier pieces together:
     db.py         record it               -> runs, run_files
     status.py     complete / late / ...   -> runs.status, missing runs found
     fallback.py   fetch what's missing    -> by known name, never a listing
+    cleanup.py    delete old raw files    -> once an hour, extracted runs only
 
 Why a separate loop instead of a hook inside sr3: files from sr3 and,
 later, from the fallback (piece 6) land in the same folders, so one code
@@ -35,6 +36,7 @@ from datetime import datetime, timezone
 
 import psycopg
 
+from ingest.cleanup import run_cleanup
 from ingest.db import connect, get_or_create_run, received_files, recorded_names, record_file
 from ingest.fallback import Fallback
 from ingest.filenames import parse_filename
@@ -43,6 +45,10 @@ from ingest.models import ModelConfig, expected_files, load_models
 from ingest.status import update_statuses
 
 log = logging.getLogger("ingest.scan")
+
+# How often the main loop runs the raw-file cleanup. Hourly is plenty:
+# runs arrive every 6 hours, and they wait 5 days before they're due.
+CLEANUP_EVERY_SECONDS = 3600
 
 # Names we've already warned about, so a file that keeps failing is
 # logged once, not every minute. Piece 6 will deal with such files
@@ -166,6 +172,7 @@ def main() -> None:
     models = load_models()
     fallback = Fallback()
     conn = None
+    next_cleanup = 0.0  # time.monotonic() value; 0 means "on the first pass"
     while True:
         try:
             # (Re)connect if needed: the first pass, or after Postgres
@@ -176,6 +183,9 @@ def main() -> None:
             new = run_pass(conn, models, fallback)
             if new:
                 log.info("pass done: %d new file(s)", new)
+            if time.monotonic() >= next_cleanup:
+                run_cleanup(conn, models)
+                next_cleanup = time.monotonic() + CLEANUP_EVERY_SECONDS
         except psycopg.OperationalError as e:
             log.error("database unavailable, will retry: %s", e)
             conn = None
