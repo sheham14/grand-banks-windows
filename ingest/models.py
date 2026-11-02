@@ -102,6 +102,21 @@ def expected_files(model: ModelConfig, run_time: datetime) -> frozenset[str]:
     run hours. Anything else means a bug upstream, so we raise
     ValueError instead of guessing.
     """
+    check_run_time(model, run_time)
+
+    # One name per variable per lead hour.
+    # A frozenset (read-only set) because order doesn't matter and we
+    # only ever ask "is this name in it?" or "what's missing?".
+    return frozenset(
+        file_name(model, v, run_time, lead)
+        for v in model.variables
+        for lead in model.lead_hours
+    )
+
+
+def check_run_time(model: ModelConfig, run_time: datetime) -> None:
+    """Raise ValueError unless run_time is a real run time of `model`:
+    timezone-aware UTC, on the hour, and one of its run hours."""
     # utcoffset() is None for a naive time and non-zero for other zones.
     if run_time.utcoffset() != timedelta(0):
         raise ValueError(f"run_time must be timezone-aware UTC, got {run_time!r}")
@@ -112,15 +127,16 @@ def expected_files(model: ModelConfig, run_time: datetime) -> frozenset[str]:
             f"{model.name} has no {run_time:%H}Z run (runs at {model.run_hours})"
         )
 
-    # "%Y%m%dT%HZ" writes e.g. 20261028T12Z: the T and Z are copied as-is.
-    run_part = run_time.strftime("%Y%m%dT%HZ")
 
-    # One name per variable per lead hour. {lead:03d} pads to 3 digits,
-    # so 7 becomes "007", matching ECCC's PT007H.
-    # A frozenset (read-only set) because order doesn't matter and we
-    # only ever ask "is this name in it?" or "what's missing?".
-    return frozenset(
-        f"{run_part}_MSC_{model.name}_{v.name}_{v.level}_{model.grid}_PT{lead:03d}H.grib2"
-        for v in model.variables
-        for lead in model.lead_hours
+def file_name(model: ModelConfig, variable: Variable, run_time: datetime, lead: int) -> str:
+    """The Datamart filename of one variable at one lead hour of one run.
+
+    The only place filenames are built, so the ingest (expected_files)
+    and the extractor can never disagree about a name.
+    """
+    # "%Y%m%dT%HZ" writes e.g. 20261028T12Z: the T and Z are copied as-is.
+    # {lead:03d} pads to 3 digits, so 7 becomes "007", matching ECCC's PT007H.
+    return (
+        f"{run_time:%Y%m%dT%HZ}_MSC_{model.name}_{variable.name}_{variable.level}"
+        f"_{model.grid}_PT{lead:03d}H.grib2"
     )
