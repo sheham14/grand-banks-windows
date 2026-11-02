@@ -1,9 +1,12 @@
-"""Database access for the ingest job (build step 5, piece 3).
+"""Database access for the ingest and store jobs (build steps 5 and 7).
 
-Connects the pieces we already have to the two tables in db/init/:
+Connects the pieces we already have to the tables in db/init/:
 
-    runs       one row per model run, e.g. (HRDPS, 2026-10-28 12Z)
-    run_files  one row per file received for a run
+    runs             one row per model run, e.g. (HRDPS, 2026-10-28 12Z)
+    run_files        one row per file received for a run
+    point_forecasts  one row per extracted value (step 7; see ingest/store.py,
+                     which uses next_run_to_extract, save_point_values and
+                     mark_extract_failed at the bottom of this file)
 
 The ingest job uses three functions, once per downloaded file:
 
@@ -197,8 +200,98 @@ def unfinished_runs(conn: psycopg.Connection, model: str) -> list[tuple[int, dat
 
 
 def set_status(conn: psycopg.Connection, run_id: int, status: str) -> None:
-    """Change a run's status. The CHECK in 001_runs.sql rejects unknown values."""
-    conn.execute("UPDATE runs SET status = %s WHERE id = %s", (status, run_id))
+    """Change a run's status. The CHECK in 001_runs.sql rejects unknown values.
+
+    A run that becomes complete has its extracted_at cleared. Normally
+    it was never extracted, so nothing changes. But an "incomplete" run
+    is extracted with gaps, and the fallback may still fetch its missing
+    files later; clearing extracted_at makes the store job extract it
+    again and fill those gaps. (Rows it already has are skipped, thanks
+    to the UNIQUE rule on point_forecasts.)
+    """
+    conn.execute(
+        """
+        UPDATE runs
+        SET status = %(status)s,
+            extracted_at = CASE WHEN %(status)s = 'complete' THEN NULL ELSE extracted_at END
+        WHERE id = %(id)s
+        """,
+        {"status": status, "id": run_id},
+    )
+
+
+def next_run_to_extract(
+    conn: psycopg.Connection, models: list[str]
+) -> tuple[int, str, datetime] | None:
+    """(id, model, run_time) of the run the store job should extract next, or None.
+
+    Waiting runs are finished (complete, or incomplete: given up on with
+    gaps), not yet extracted, and not refused. Newest first, so after an
+    outage the latest forecast is ready first and the backlog follows.
+    "late" runs wait: the fallback is still fetching their files.
+    """
+    return conn.execute(
+        """
+        SELECT id, model, run_time FROM runs
+        WHERE model = ANY(%s)
+          AND status IN ('complete', 'incomplete')
+          AND extracted_at IS NULL
+          AND extract_error IS NULL
+        ORDER BY run_time DESC, model
+        LIMIT 1
+        """,
+        (models,),
+    ).fetchone()
+
+
+def save_point_values(conn: psycopg.Connection, run_id: int, values: list) -> int:
+    """Store one run's extracted values and mark the run extracted.
+
+    values: extract.PointValue records, all from this run. Returns how
+    many values the run has stored afterwards.
+
+    All or nothing: the rows and extracted_at are saved together, so a
+    crash halfway leaves the run unextracted (and it's simply done again),
+    never half-stored and marked done.
+    """
+    model, run_time = conn.execute(
+        "SELECT model, run_time FROM runs WHERE id = %s", (run_id,)
+    ).fetchone()
+    for p in values:
+        if (p.model, p.run_time) != (model, run_time):
+            raise ValueError(
+                f"value from {p.model} {p.run_time:%Y-%m-%d %HZ} can't be stored "
+                f"under run {run_id} ({model} {run_time:%Y-%m-%d %HZ})"
+            )
+
+    with conn.transaction():
+        with conn.cursor() as cur:
+            # executemany: the same INSERT once per value. ON CONFLICT DO
+            # NOTHING skips values already stored, e.g. when a run that was
+            # incomplete is extracted again to fill its gaps.
+            cur.executemany(
+                """
+                INSERT INTO point_forecasts
+                    (run_id, member, site_id, variable, lead_hours, valid_time, value, unit)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                [
+                    (run_id, p.member, p.site_id, p.variable, p.lead_hours,
+                     p.valid_time, p.value, p.unit)
+                    for p in values
+                ],
+            )
+        conn.execute("UPDATE runs SET extracted_at = now() WHERE id = %s", (run_id,))
+    return conn.execute(
+        "SELECT count(*) FROM point_forecasts WHERE run_id = %s", (run_id,)
+    ).fetchone()[0]
+
+
+def mark_extract_failed(conn: psycopg.Connection, run_id: int, reason: str) -> None:
+    """Record why the extractor refused a run. It won't be picked again
+    until someone clears extract_error (after fixing the cause)."""
+    conn.execute("UPDATE runs SET extract_error = %s WHERE id = %s", (reason, run_id))
 
 
 def _require_utc(t: datetime, what: str) -> None:
