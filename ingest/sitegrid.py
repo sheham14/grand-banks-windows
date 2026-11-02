@@ -111,6 +111,8 @@ class SiteCell:
     distance_km: float  # from the site to that point
     tilt_deg: float     # which way the grid's row runs there, for wind.rotate_to_earth()
     moved: bool         # True if the nearest point had no data, so a further one was used
+    grid: tuple[int, int]  # (Ni, Nj) of the grid this was found on; the extractor
+                           # refuses a file of any other size (ECCC changed the grid)
 
 
 @dataclass(frozen=True)
@@ -118,6 +120,7 @@ class _Grid:
     """What locate_sites needs from a file: positions and which points have data."""
 
     ni: int                       # points per row
+    nj: int                       # number of rows
     lats: np.ndarray              # flat list, one latitude per point
     lons: np.ndarray              # flat list, one longitude per point
     has_data: np.ndarray | None   # True where the point has a value; None = all do
@@ -254,7 +257,7 @@ def locate_sites(grib_path: Path, sites: list[Site]) -> dict[str, SiteCell]:
         cells[site.id] = SiteCell(
             site_id=site.id, row=row, col=col, index=k,
             lat=float(grid.lats[k]), lon=float(grid.lons[k]),
-            distance_km=dist, tilt_deg=tilt, moved=moved,
+            distance_km=dist, tilt_deg=tilt, moved=moved, grid=(grid.ni, grid.nj),
         )
 
         message = "%s %s: cell (%d, %d), %.2f km away, tilt %.1f deg"
@@ -281,6 +284,7 @@ def _read_grid(path: Path) -> _Grid:
                 raise SiteGridError(f"{path.name}: points stored in an unexpected order {order}")
 
             ni = eccodes.codes_get(handle, "Ni")
+            nj = eccodes.codes_get(handle, "Nj")
             # ecCodes works out every point's position from the grid
             # definition in the file (section 3: the rotated pole, spacing
             # and size), in the same order as the values.
@@ -297,7 +301,7 @@ def _read_grid(path: Path) -> _Grid:
         finally:
             # Release the C library's memory (see gribcheck._read_single_header).
             eccodes.codes_release(handle)
-    return _Grid(ni=ni, lats=lats, lons=lons, has_data=has_data)
+    return _Grid(ni=ni, nj=nj, lats=lats, lons=lons, has_data=has_data)
 
 
 def main() -> None:
