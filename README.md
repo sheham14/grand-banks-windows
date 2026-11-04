@@ -1,9 +1,125 @@
 # Grand Banks Weather Window Finder
 
-A pipeline that pulls live public weather forecasts for offshore Newfoundland, decodes and normalizes them, checks them against real buoy observations, and answers one question for offshore operators: when is the next workable weather window for a job, and how confident are we?
+A pipeline that pulls Canada's weather forecasts for offshore Newfoundland as they're published, decodes them, and stores wind and wave forecasts at fixed offshore sites. Its goal is to answer one question for offshore operators: **when is the next workable weather window for a job, and how confident are we?**
 
-**Status:** Phase 0, setup. Nothing runs yet.
+Today it does the first part: live ingest, decoding, checks, and a forecast chart. Checking forecasts against buoys, more models, and the window finder itself come next (see [What's next](#whats-next)).
 
-**Not a safety tool.** This is a learning and portfolio project built on public data. Operational limits in it are examples, not real company limits.
+> **Prototype, not a safety tool.** Built on public data for learning and as a portfolio piece. Any operational limits in it are examples, not real company limits.
 
-The build plan is in [docs/build-plan.md](docs/build-plan.md), and background research is in [docs/research-2026-10-26.md](docs/research-2026-10-26.md).
+**Status, Nov 4, 2026:** Phase 1 of 6 done. Running unattended on a small AWS VM (ARM, Ubuntu, Docker Compose) since Oct 28.
+
+**How it was built:** Claude Code wrote the code. I (Seum) approved each piece before it was written, checked the raw data by hand (`grib_dump`, Jupyter notebooks, the browser), and can walk you through how it works.
+
+![Meteogram for Nickerson Bank: direction arrows, wind speed in knots and significant wave height over 48 hours](docs/img/meteogram.png)
+
+*Nickerson Bank, from the HRDPS and RDWPS runs of 12Z Wed Nov 4, 2026. Arrows show where the wind is going, every 3 hours; hovering shows each hour's values in UTC and St. John's time.*
+
+## How it works
+
+```mermaid
+flowchart LR
+  ECCC[("ECCC MSC Datamart<br/>dd.weather.gc.ca")]
+  SR3["sr3 subscribers<br/>HRDPS · RDWPS · buoys"]
+  RAW["data/raw<br/>GRIB2 files, buoy SWOB-ML"]
+  INGEST["ingest<br/>check files, record runs,<br/>fetch missed files, clean up"]
+  STORE["store<br/>extract sites, rotate winds,<br/>check against ECCC's WDIR"]
+  DB[("PostgreSQL<br/>runs · run_files · point_forecasts")]
+  API["api<br/>FastAPI + meteogram page"]
+
+  ECCC -->|"AMQP notices, then download"| SR3 --> RAW
+  ECCC -.->|"HTTPS by exact file name<br/>(only for missed files)"| INGEST
+  RAW --> INGEST --> DB
+  RAW --> STORE --> DB
+  DB -->|"read-only"| API
+```
+
+Seven Docker Compose services; all but `db` run from one image built from the [Dockerfile](Dockerfile):
+
+| Service | Job |
+|---|---|
+| `sr3-hrdps`, `sr3-rdwps`, `sr3-buoys` | ECCC's [sr3](https://github.com/MetPX/sarracenia) client. Each holds an AMQP subscription and downloads matching files as ECCC announces them. |
+| `ingest` | Every minute: checks each new file is a whole GRIB2 file, records it against its run, works out each run's status (receiving, late, complete, incomplete), fetches files the feed missed, and deletes raw files of old extracted runs. |
+| `store` | Extracts each finished run at the sites in [config/sites.yaml](config/sites.yaml) into `point_forecasts`, one row per site, hour and variable, each with its unit. |
+| `db` | PostgreSQL 17. |
+| `api` | Serves `/api/sites/{site}/latest` and the meteogram page, through a read-only database connection. |
+
+**Models:** HRDPS (High Resolution Deterministic Prediction System, 2.5 km) for 10 m wind, and RDWPS (Regional Deterministic Wave Prediction System, national 2.5 km domain) for significant wave height and peak period. Both run four times a day; we keep hours 0 to 48.
+
+**Sites:** two forecast sites on the Grand Banks (Nickerson Bank, and WSP's 2022 buoy position) and one verification site at buoy 44139, Banquereau Bank. No buoy on the Grand Banks itself is reporting, so live checks have to happen at Banquereau, 379 km southwest of Nickerson Bank.
+
+## Data problems it handles
+
+- **Winds on a rotated grid.** HRDPS uses a rotated latitude-longitude grid, and its u/v wind components are grid-relative (the GRIB header's component flag says so), so "u" doesn't point east. The extractor rotates each site's winds to earth-relative using the grid's local tilt, then compares the direction with ECCC's own `WDIR` field every hour. A run more than 5° off is refused, not stored. Below 1 m/s the check is skipped: direction is barely defined near calm, and rounding in the packed data grows as the wind drops.
+- **Two models, two grids.** RDWPS sits on a different grid from HRDPS, so each site's grid cell is looked up per model. Reusing the wind cell on the wave grid would land 8 km off.
+- **A push feed, not polling.** ECCC's usage policy requires its AMQP feed for systematic retrieval and asks users not to request directory listings. No code path lists a Datamart directory.
+- **Missing files and missing runs.** ECCC caps a queue at 10,000 notices, and one HRDPS run announces about 20,600 files (we filter on our side), so a few hours offline loses notices. The ingest knows every file name a complete run should have, so a late run's missing files are fetched over HTTPS by exact name, with backoff. A live test recovered 4 deleted files. Runs that never sent a single file are noticed from the clock, not by waiting.
+- **Half-finished runs.** A run extracted with gaps is extracted again once its missing files arrive. Until then, and for any refused run, the API serves the previous good run instead.
+- **Disk on a small VM.** Raw files arrive at about 2.2 GB a day. Once a run is extracted and 5 days old, its GRIB files are deleted by exact name; refused runs keep theirs for debugging, and the extracted values stay. At steady state about 20 runs per model are on disk.
+- **Freshness.** The API flags a run stale once it's more than 12 hours old (normally the newest is 3.5 to 9.5 hours old), and the page says so in words.
+
+Conventions throughout: all times in UTC and timezone-aware; values stored in SI units, each with its unit, and converted to knots only on the page; wind direction is the direction the wind comes **from**. Each site takes the value at the nearest grid point, without interpolation.
+
+## What it has measured so far
+
+From Oct 28 18Z to Nov 4 12Z, one week. **A small sample:** treat these as first observations, not statistics.
+
+- **28 runs per model, all complete, none refused.** This includes a 3-day unattended run at the start.
+- **Run arrival,** from ECCC's publish times (median, after the run's nominal time):
+
+  | Model | First file | Last file | Last file, range |
+  |---|---|---|---|
+  | HRDPS | 2 h 49 min | 3 h 16 min | 3 h 14 min to 3 h 27 min |
+  | RDWPS | 3 h 24 min | 3 h 27 min | 3 h 26 min to 3 h 29 min |
+
+  So a full run is ready about 3.5 hours after its nominal time. RDWPS starts publishing a few minutes after HRDPS's last file. ECCC documents that RDWPS is driven by HRDPS winds; that it waits for them is our inference from these times.
+- **Wind direction vs ECCC's `WDIR`:** worst gap 1.10° in the 25 HRDPS runs whose logs survive, against the 5° limit. Gaps grow as the wind gets lighter.
+
+## Run it yourself
+
+Needs Docker with Compose.
+
+```bash
+cp .env.example .env          # then set POSTGRES_PASSWORD
+docker compose up -d --build  # the whole pipeline, as on the VM
+```
+
+The meteogram is at http://localhost:8000, and the API's interactive docs at http://localhost:8000/docs. Forecasts appear once a run has arrived and been extracted; runs are complete about 3.5 hours after their nominal time (00Z, 06Z, 12Z, 18Z). Ports are bound to localhost only; to reach a server's copy, use an SSH tunnel (`ssh -N -L 8001:localhost:8000 <server>`, then http://localhost:8001).
+
+**Tests:** 147, with `pytest` from the repo root, in a conda-forge environment with the packages in [environment.yml](environment.yml) plus `pytest` and `httpx2`. Database tests skip unless the `db` container is up. Tests that read real GRIB files skip when `data/raw/` is empty, because downloaded data isn't in git. On a development machine with real files, start only `docker compose up -d db api`: the full stack would start the cleanup, which could delete files those tests use.
+
+## What's next
+
+**Phase 2a, next:**
+- Add a US model (NOAA's GFS).
+- Map every model's parameters through one config table (`param_map.yaml`).
+- Parse the buoy files and score forecasts against buoy 44139 every night.
+- First contact with AWIPS: Unidata's public EDEX server, through CAVE and python-awips.
+
+**Later:**
+- 2b: a Java decoder checked against the Python output, ECMWF, a common grid, and a hindcast at WSP's 2022 Grand Banks buoy.
+- 3: ensembles and the weather-window engine.
+- 4: a comparison with ECMWF's AI model, AIFS.
+- 5: a decision dashboard.
+- 6: Terraform, a runbook, and an AWIPS configuration for ECCC's models.
+
+**Limits today:**
+- No verification scores yet: buoy files are saved but not parsed.
+- One deterministic run per model, with no ensemble spread, so there's no "how confident" yet.
+- No live buoy on the Grand Banks itself.
+- The project doesn't use AWIPS yet. The rotated-grid wind problem it handles is one any system showing ECCC's models has to solve, AWIPS included.
+
+## Repository map
+
+```
+api/          FastAPI app and the meteogram page (api/static/meteogram.html)
+config/       sites.yaml (where), models.yaml (expected files, deadlines, retention)
+db/init/      table definitions, applied when Postgres is first created
+ingest/       sr3 configs, ingest scan, run status, fallback, extraction, store, cleanup
+notebooks/    hand checks: first look at an HRDPS file, wind rotation vs WDIR
+tests/        pytest suite
+docs/         build plan and research notes
+```
+
+## Data and licence
+
+Forecast and buoy data: Environment and Climate Change Canada, MSC Datamart, under the [Open Government Licence – Canada](https://open.canada.ca/en/open-government-licence-canada). Raw data isn't stored in this repository.
