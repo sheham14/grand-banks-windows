@@ -1,0 +1,396 @@
+<!doctype html>
+<!--
+  The meteogram page (build step 8): one site's latest forecast over time.
+
+  Deliberately plain: one file, no build step, no framework. The real
+  dashboard is Phase 5. Everything it shows comes from the API in
+  api/main.py:
+    /api/sites                   fills the site picker
+    /api/sites/{id}/latest       the newest good HRDPS and RDWPS runs there
+
+  Three stacked rows share one time axis:
+    1. direction: an arrow every 3 hours pointing where the wind is GOING
+    2. wind speed in knots (HRDPS 10 m wind)
+    3. significant wave height in metres (RDWPS)
+  Hover anywhere for every value at that hour; a full table is below.
+
+  Rules from the rest of the project that this page keeps:
+    - Times are UTC. St. John's time is shown only as an extra, in the hover
+      and the table (convert to local time only for display).
+    - The API serves SI units. The ONLY conversion here is m/s to knots.
+    - A missing hour stays a visible gap in the line, never joined over.
+    - Calm hours (under 1 m/s) get no arrow: their direction was never
+      checked against ECCC's WDIR (ingest/extract.py), and means little.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grand Banks Meteogram</title>
+<!--
+  Plotly draws the chart. Version pinned, and "integrity" is the file's
+  SHA-512 hash: the browser refuses to run it if the CDN ever serves a
+  different file. The "basic" bundle (about 1 MB) has the line charts we use.
+-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/3.0.1/plotly-basic.min.js"
+        integrity="sha512-dssZ3PuWvYvnT4HAOjG7oTs96YtjbLEcKrDwXKcuywVp8AS0/1qOudS72qc4TqUabDwjl1w0EoI7rRWQUh45PA=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<style>
+  /* Colours as named roles, so light and dark mode swap in one place.
+     The chart reads the same variables (see colours() in the script). */
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --text: #0b0b0b;
+    --text-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --line: #2a78d6;          /* the data line, one per chart */
+    --warning: #fab219;
+    --border: rgba(11, 11, 11, 0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --text: #f0efec;
+      --text-2: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --axis: #383835;
+      --line: #3987e5;
+      --border: rgba(255, 255, 255, 0.10);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --text: #f0efec; --text-2: #c3c2b7;
+    --muted: #898781; --grid: #2c2c2a; --axis: #383835; --line: #3987e5;
+    --border: rgba(255, 255, 255, 0.10);
+  }
+  body {
+    margin: 0 auto; max-width: 1000px; padding: 16px;
+    background: var(--page); color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .prototype { margin: 0 0 16px; color: var(--text-2); }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; }
+  select { font: inherit; padding: 4px 6px; }
+  .note, .runs, .key, footer { color: var(--text-2); font-size: 13px; }
+  .warning {
+    border: 1px solid var(--border); border-left: 4px solid var(--warning);
+    background: var(--surface); padding: 8px 12px; margin: 8px 0;
+  }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px; margin: 8px 0;
+  }
+  #chart { width: 100%; height: 560px; }
+  details { margin: 16px 0; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 3px 10px; text-align: right; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  footer { margin-top: 24px; }
+</style>
+</head>
+<body>
+<h1>Grand Banks meteogram</h1>
+<p class="prototype"><strong>Prototype, not for operational decisions.</strong></p>
+
+<div class="controls">
+  <label>Site <select id="site"></select></label>
+  <span class="note" id="site-note"></span>
+</div>
+<div id="warnings"></div>
+<p class="runs" id="runs">Loading…</p>
+
+<div class="card"><div id="chart"></div></div>
+<p class="key">↑ where the wind is going, every 3 hours · ○ calm (under 1 m/s; direction not checked) ·
+  times in UTC; hover for St. John's time</p>
+
+<details>
+  <summary>Values table</summary>
+  <div class="table-wrap"><table id="table"></table></div>
+</details>
+
+<footer>
+  Forecast data: Environment and Climate Change Canada, MSC Datamart (HRDPS 10 m wind,
+  RDWPS significant wave height), under the Open Government Licence – Canada.
+  Each model's value is from its grid point nearest the site.
+</footer>
+
+<script>
+"use strict";
+
+// --- constants that mirror the Python side -----------------------------
+// Keep these equal to the Python values named; they're not shared code.
+const KNOTS_PER_MS = 3600 / 1852;  // ingest/wind.py ms_to_knots: 1 kt = 1852 m per hour
+const CALM_MS = 1.0;               // ingest/extract.py MIN_SPEED_FOR_CHECK
+// Which model feeds which panel. Phase 2a adds GFS; then each panel
+// gets one line per model, and a legend.
+const WIND_MODEL = "HRDPS";
+const WAVE_MODEL = "RDWPS";
+const ARROW_EVERY_HOURS = 3;       // hourly arrows crowd a phone screen
+
+const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+                 "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+
+// --- small helpers ------------------------------------------------------
+
+// 16-point compass name for a direction in degrees: 350 -> "N".
+// Each name covers 22.5 degrees centred on it; "% 16" folds 360 back to N.
+function compass(deg) { return COMPASS[Math.round(deg / 22.5) % 16]; }
+
+// The API's directions say where the wind comes FROM (the meteorological
+// convention). An arrow drawn along the wind points the opposite way:
+// from 350 (almost north) means going to 170 (almost south), arrow down.
+function goingTo(fromDeg) { return (fromDeg + 180) % 360; }
+
+// Plotly has no time zones: it draws a time string exactly as written.
+// "2026-11-03T18:00:00Z" -> "2026-11-03 18:00" keeps the axis in UTC
+// (a Date object would be shifted into the viewer's own time zone).
+function axisTime(iso) { return iso.slice(0, 16).replace("T", " "); }
+
+// The browser knows St. John's daylight-saving rules, so this shows NST
+// (UTC-3:30) in winter and NDT (UTC-2:30) in summer by itself.
+const LOCAL = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/St_Johns", weekday: "short", hour: "2-digit",
+  minute: "2-digit", hourCycle: "h23", timeZoneName: "short" });
+const UTC_DAY = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "UTC", weekday: "short", day: "numeric", month: "short" });
+
+// "18Z Tue 3 Nov": how forecasters name a run.
+function runName(iso) {
+  const t = new Date(iso);
+  return `${String(t.getUTCHours()).padStart(2, "0")}Z ${UTC_DAY.format(t)}`;
+}
+
+// Colour roles from the CSS above, so the chart follows light/dark mode.
+function colours() {
+  const css = getComputedStyle(document.documentElement);
+  const get = name => css.getPropertyValue(name).trim();
+  return { surface: get("--surface"), text: get("--text"), text2: get("--text-2"),
+           muted: get("--muted"), grid: get("--grid"), axis: get("--axis"),
+           line: get("--line") };
+}
+
+// One model's hourly series, with a null wherever an hour is missing.
+// Plotly breaks the line at a null, so a gap stays a visible gap instead
+// of a straight line drawn across hours we have no forecast for.
+// Returns { times: [...], values: [...] }, one entry per lead hour.
+function hourly(model, variable) {
+  const v = model && model.variables[variable];
+  if (!v || v.values.length === 0) return { times: [], values: [] };
+  const byLead = new Map(v.values.map(p => [p.lead_hours, p.value]));
+  const lastLead = Math.max(...byLead.keys());
+  const start = Date.parse(model.run_time);
+  const times = [], values = [];
+  for (let lead = 0; lead <= lastLead; lead++) {
+    times.push(new Date(start + lead * 3600e3).toISOString());
+    values.push(byLead.has(lead) ? byLead.get(lead) : null);
+  }
+  return { times, values };
+}
+
+// --- drawing ------------------------------------------------------------
+
+let lastData = null;  // kept so a light/dark switch can redraw
+
+function render(data) {
+  lastData = data;
+  const wind = data.models[WIND_MODEL], waves = data.models[WAVE_MODEL];
+  showRuns(wind, waves);
+  showWarnings(wind, waves);
+  drawChart(wind, waves);
+  fillTable(wind, waves);
+}
+
+function showRuns(wind, waves) {
+  const part = (label, name, m) => m
+    ? `${label}: ${name} run ${runName(m.run_time)}, ${m.age_hours} h old`
+    : `${label}: no ${name} run yet`;
+  document.getElementById("runs").textContent =
+    `${part("Wind", WIND_MODEL, wind)} · ${part("Waves", WAVE_MODEL, waves)}`;
+}
+
+// A missing or stale model gets a warning that says so in words; the
+// colour bar beside it is only a cue, never the message itself.
+function showWarnings(wind, waves) {
+  const box = document.getElementById("warnings");
+  box.replaceChildren();
+  for (const [name, m] of [[WIND_MODEL, wind], [WAVE_MODEL, waves]]) {
+    let text = null;
+    if (!m) text = `⚠ Warning: no ${name} run with values for this site yet.`;
+    else if (m.stale) text = `⚠ Warning: the newest ${name} run is ${m.age_hours} hours old ` +
+      `(normally under 10). The pipeline may have stopped; this is not a current forecast.`;
+    if (text) {
+      const p = document.createElement("p");
+      p.className = "warning";
+      p.textContent = text;
+      box.append(p);
+    }
+  }
+}
+
+function drawChart(wind, waves) {
+  const c = colours();
+  const speed = hourly(wind, "wind_speed");
+  const dirn = hourly(wind, "wind_direction");
+  const hs = hourly(waves, "wave_height");
+
+  const kt = speed.values.map(ms => ms === null ? null : ms * KNOTS_PER_MS);
+  // Hover text for each wind hour: direction, or "calm" if too light.
+  const windNote = speed.values.map((ms, i) => {
+    const d = dirn.values[i];
+    if (ms === null || d === null) return "";
+    if (ms < CALM_MS) return "calm (direction not checked)";
+    return `from ${Math.round(d)}° (${compass(d)})`;
+  });
+
+  // Every hour of either model, for the St. John's time row in the hover.
+  const allTimes = [...new Set([...speed.times, ...hs.times])].sort();
+
+  const traces = [
+    // An invisible row whose only job is putting local time in the hover.
+    { x: allTimes.map(axisTime), y: allTimes.map(() => 0.5), yaxis: "y3",
+      mode: "markers", marker: { opacity: 0 },
+      customdata: allTimes.map(t => LOCAL.format(new Date(t))),
+      hovertemplate: "St. John's %{customdata}<extra></extra>" },
+    { x: speed.times.map(axisTime), y: kt, yaxis: "y", mode: "lines",
+      line: { color: c.line, width: 2 }, connectgaps: false, customdata: windNote,
+      hovertemplate: "<b>%{y:.1f} kt</b> wind %{customdata}<extra></extra>" },
+    { x: hs.times.map(axisTime), y: hs.values, yaxis: "y2", mode: "lines",
+      line: { color: c.line, width: 2 }, connectgaps: false,
+      hovertemplate: "<b>%{y:.1f} m</b> significant wave height<extra></extra>" },
+  ];
+
+  // The direction row: a character per 3 hours, rotated by Plotly about
+  // its own centre. textangle turns clockwise, and compass bearings also
+  // run clockwise from north, so "↑" turned by the going-to bearing points
+  // where the wind goes: 90 -> right (east), 180 -> down (south).
+  const arrows = [];
+  speed.times.forEach((t, lead) => {
+    const ms = speed.values[lead], d = dirn.values[lead];
+    if (lead % ARROW_EVERY_HOURS !== 0 || ms === null || d === null) return;
+    const calm = ms < CALM_MS;
+    arrows.push({ x: axisTime(t), y: 0.5, xref: "x", yref: "y3", showarrow: false,
+                  text: calm ? "○" : "↑", textangle: calm ? 0 : goingTo(d),
+                  font: { size: 16, color: c.text2 } });
+  });
+
+  const axis = { gridcolor: c.grid, linecolor: c.axis, zeroline: false,
+                 tickfont: { color: c.muted }, fixedrange: true };
+  const layout = {
+    paper_bgcolor: c.surface, plot_bgcolor: c.surface,
+    font: { family: 'system-ui, -apple-system, "Segoe UI", sans-serif', color: c.text2, size: 12 },
+    margin: { l: 64, r: 16, t: 8, b: 48 },
+    showlegend: false,
+    // One hover box listing every row at the hour under the pointer.
+    hovermode: "x unified",
+    hoverlabel: { bgcolor: c.surface, bordercolor: c.axis, font: { color: c.text } },
+    xaxis: { ...axis, type: "date", anchor: "y2", fixedrange: false,
+             title: { text: "Valid time (UTC)", font: { color: c.muted } },
+             hoverformat: "%a %d %b %H:%M UTC",
+             showspikes: true, spikemode: "across", spikethickness: 1,
+             spikecolor: c.muted, spikedash: "solid" },
+    // Rows from the top: direction strip, wind, waves (domain = share of height).
+    yaxis3: { domain: [0.89, 1], range: [0, 1], visible: false, fixedrange: true },
+    yaxis: { ...axis, domain: [0.49, 0.85], rangemode: "tozero",
+             title: { text: "Wind (kt)", font: { color: c.muted } } },
+    yaxis2: { ...axis, domain: [0, 0.4], rangemode: "tozero",
+              title: { text: "Hs (m)", font: { color: c.muted } } },
+    annotations: arrows,
+  };
+  Plotly.react("chart", traces, layout,
+               { responsive: true, displayModeBar: false });
+}
+
+// The same numbers as a table: readable without hovering, and the
+// easiest place to check a value by hand.
+function fillTable(wind, waves) {
+  const speed = hourly(wind, "wind_speed"), dirn = hourly(wind, "wind_direction");
+  const hs = hourly(waves, "wave_height"), tp = hourly(waves, "wave_period_peak");
+  const rows = new Map();  // time -> {kt, dir, hs, tp}
+  const put = (series, key, f) => series.times.forEach((t, i) => {
+    if (series.values[i] === null) return;
+    rows.set(t, { ...rows.get(t), [key]: f(series.values[i]) });
+  });
+  put(speed, "kt", ms => (ms * KNOTS_PER_MS).toFixed(1));
+  put(dirn, "dir", d => `${Math.round(d)} ${compass(d)}`);
+  put(hs, "hs", m => m.toFixed(1));
+  put(tp, "tp", s => s.toFixed(1));
+
+  const table = document.getElementById("table");
+  table.replaceChildren();
+  const head = table.createTHead().insertRow();
+  for (const h of ["Valid (UTC)", "St. John's", "Wind (kt)", "From (°)", "Hs (m)", "Peak period (s)"]) {
+    const th = document.createElement("th");
+    th.textContent = h;
+    head.append(th);
+  }
+  const body = table.createTBody();
+  for (const t of [...rows.keys()].sort()) {
+    const r = rows.get(t), tr = body.insertRow();
+    for (const cell of [axisTime(t), LOCAL.format(new Date(t)), r.kt, r.dir, r.hs, r.tp]) {
+      tr.insertCell().textContent = cell ?? "–";
+    }
+  }
+}
+
+// --- loading --------------------------------------------------------------
+
+async function getJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url}: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+async function showSite(id) {
+  const runs = document.getElementById("runs");
+  try {
+    render(await getJson(`/api/sites/${encodeURIComponent(id)}/latest`));
+  } catch (e) {
+    runs.textContent = `Could not load the forecast: ${e.message}`;
+  }
+}
+
+async function start() {
+  const sites = await getJson("/api/sites");
+  const select = document.getElementById("site");
+  for (const s of sites) {
+    const role = s.role === "verification" ? " (verification buoy)" : "";
+    select.append(new Option(`${s.name}${role}`, s.id));
+  }
+  // ?site=... in the address picks the site, so a view can be linked to.
+  const params = new URLSearchParams(location.search);
+  if (sites.some(s => s.id === params.get("site"))) select.value = params.get("site");
+
+  const describe = () => {
+    const s = sites.find(x => x.id === select.value);
+    document.getElementById("site-note").textContent =
+      `${s.lat.toFixed(2)}° N, ${Math.abs(s.lon).toFixed(2)}° W · ${s.role} site`;
+  };
+  select.addEventListener("change", () => {
+    history.replaceState(null, "", `?site=${encodeURIComponent(select.value)}`);
+    describe();
+    showSite(select.value);
+  });
+  describe();
+  showSite(select.value);
+
+  // Redraw in the new colours when the system switches light/dark mode.
+  matchMedia("(prefers-color-scheme: dark)")
+    .addEventListener("change", () => lastData && render(lastData));
+}
+
+start().catch(e => {
+  document.getElementById("runs").textContent = `Could not load the sites: ${e.message}`;
+});
+</script>
+</body>
+</html>
