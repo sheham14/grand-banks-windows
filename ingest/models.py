@@ -46,6 +46,7 @@ class ModelConfig:
     """
 
     name: str                       # e.g. "HRDPS"
+    description: str                # e.g. "High Resolution Deterministic Prediction System ..."
     run_hours: tuple[int, ...]      # e.g. (0, 6, 12, 18)
     lead_hours: tuple[int, ...]     # every lead hour, e.g. (0, 1, ..., 48)
     grid: str                       # e.g. "RLatLon0.0225"
@@ -82,6 +83,8 @@ def load_models(path: Path = DEFAULT_CONFIG) -> dict[str, ModelConfig]:
 
         models[name] = ModelConfig(
             name=name,
+            # Shown on the meteogram page (api/main.py).
+            description=m["description"],
             run_hours=tuple(m["run_hours"]),
             # range() stops BEFORE its end value, so "last + 1" is what
             # makes hour 48 included. Without it we'd get 48 hours, not 49:

@@ -39,11 +39,15 @@ from dotenv import load_dotenv
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def connect(dbname: str | None = None) -> psycopg.Connection:
+def connect(dbname: str | None = None, read_only: bool = False) -> psycopg.Connection:
     """Open a connection to our Postgres, using the settings in .env.
 
     dbname overrides POSTGRES_DB; the tests use it to work in a separate
     gbw_test database so they never touch real data.
+
+    read_only=True makes Postgres itself refuse any change (INSERT, UPDATE,
+    DELETE, CREATE...) on this connection. The web API (api/main.py) uses
+    it: it only ever reads, so a bug in it can't damage the data.
     """
     # load_dotenv copies .env into os.environ, but never overwrites a
     # variable that is already set. Locally the values come from .env;
@@ -63,6 +67,11 @@ def connect(dbname: str | None = None) -> psycopg.Connection:
         # Where two statements must succeed or fail together, we wrap them
         # in `with conn.transaction():` (see record_file).
         autocommit=True,
+        # "-c name=value" sets a Postgres setting for this connection only.
+        # default_transaction_read_only makes every statement read-only;
+        # a write fails with "cannot execute ... in a read-only transaction".
+        # (psycopg leaves out options that are None.)
+        options="-c default_transaction_read_only=on" if read_only else None,
     )
 
 
