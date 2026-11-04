@@ -1,4 +1,4 @@
-# One image for the sr3 subscribers and the ingest job.
+# One image for the sr3 subscribers, the ingest and store jobs, and the API.
 #
 # Built from the same file on the laptop (Intel/AMD) and the AWS VM (ARM):
 # the micromamba base image and every conda-forge package exist for both.
@@ -26,6 +26,7 @@ ENV HOME=/home/gbw
 WORKDIR /app
 COPY config/ config/
 COPY ingest/ ingest/
+COPY api/ api/
 
 # Print log lines straight away instead of buffering them, so
 # `docker compose logs` shows them as they happen.

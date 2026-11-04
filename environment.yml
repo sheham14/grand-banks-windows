@@ -16,6 +16,13 @@ dependencies:
   - psycopg=3.3.4           # Postgres driver
   - pyyaml=6.0.3            # config/*.yaml
   - python-dotenv=1.2.4     # reads .env when run outside Docker
+  # The web API (build step 8, api/main.py). fastapi-core is FastAPI
+  # alone; the plain "fastapi" package also pulls in a command-line tool
+  # and telemetry libraries we don't use. Pinned 2026-11-03.
+  - fastapi-core=0.162.0
+  - uvicorn=0.54.0          # the web server that runs the FastAPI app
+  # (The tests also need httpx2, for FastAPI's TestClient. Tests run in the
+  # local gbw environment, not in this image, so it isn't listed here.)
   - pip
   - pip:
       - metpx-sr3==3.3.1    # ECCC's sr3 client (not on conda-forge)

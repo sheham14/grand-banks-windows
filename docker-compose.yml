@@ -8,6 +8,11 @@
 #   ingest      checks and records downloaded files, runs the fallback,
 #               deletes raw files of old extracted runs
 #   store       extracts each finished run at our sites into point_forecasts
+#   api         the meteogram page and its API, at http://localhost:8000
+#
+# On the laptop, start only what's safe: `docker compose up -d db api`.
+# The full stack would start the ingest, and with it the cleanup, which
+# could delete raw files the real-file tests need.
 #
 # restart: unless-stopped brings every service back after a crash or a
 # reboot, unless we stopped it ourselves. That's what lets it run
@@ -122,6 +127,28 @@ services:
     volumes:
       # Read-only: this job only reads GRIB files, so it can't damage them.
       - ./data:/app/data:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # The meteogram page and the API behind it (build step 8). It reads the
+  # database only (its connection is read-only) and needs no data folder.
+  api:
+    build: .
+    image: gbw-pipeline
+    restart: unless-stopped
+    user: "1000:1000"
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+    ports:
+      # 127.0.0.1: reachable only from the machine itself, so nothing is
+      # open to the internet and AWS's firewall stays shut. From the
+      # laptop, reach the VM's copy through SSH:
+      #   ssh -L 8000:localhost:8000 gbw-vm    then open http://localhost:8000
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
