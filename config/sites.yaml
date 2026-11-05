@@ -33,3 +33,17 @@ sites:
     role: verification
     buoy_id: "44139"
     note: ECCC moored buoy, reporting hourly. 379 km from Nickerson Bank and 582 km from the WSP site, so not on the Grand Banks themselves.
+
+  - id: st_johns_smartatlantic
+    name: St. John's approach (SmartAtlantic, coastal)
+    # Read from the buoy's own ERDDAP rows: the same latitude/longitude
+    # in every row (checked 2026-11-05). Its precise_lat/precise_lon
+    # columns wander about 250 m as it swings on its mooring.
+    lat: 47.56716
+    lon: -52.630578
+    role: verification
+    # Not read by any code yet (like buoy_id above); the buoy parser in
+    # Phase 2a step 4 will use it. Query it at www.smartatlantic.ca/erddap:
+    # CIOOS Atlantic redirects data requests there.
+    erddap_dataset: SMA_st_johns
+    note: SmartAtlantic buoy at the St. John's harbour approach, reporting half-hourly. Coastal, so not comparable with the offshore sites. Nearest RDWPS point is sea, 0.83 km away (hand check 2026-11-05). 138 km from Nickerson Bank, 132 km from the WSP site.
