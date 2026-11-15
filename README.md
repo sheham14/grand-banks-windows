@@ -8,7 +8,7 @@ Today it does the first part: live ingest, decoding, checks, a forecast chart, a
 
 **Status, Nov 15, 2026:** Phase 1 of 6 done; Phase 2a (a second model, parameter mapping, nightly verification) in progress. Running unattended on a small AWS VM (ARM, Ubuntu, Docker Compose) since Oct 28.
 
-**How it was built:** Claude Code wrote the code. I approved each piece before it was written, checked the raw data by hand (`grib_dump`, Jupyter notebooks, the browser), and can walk you through how it works.
+**How it was built:** Built with an AI coding assistant. I approved each piece before it was written, checked the raw data by hand (`grib_dump`, Jupyter notebooks, the browser), and can walk you through how it works.
 
 ![Meteogram for Nickerson Bank: direction arrows, wind speed in knots and significant wave height over 48 hours](docs/img/meteogram.png)
 
