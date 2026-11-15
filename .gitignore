@@ -31,3 +31,10 @@ dist/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Private notes, kept on this machine only
+CLAUDE.md
+docs/progress.md
+docs/learning-log.md
+docs/job-posting.md
+docs/build-plan.md
